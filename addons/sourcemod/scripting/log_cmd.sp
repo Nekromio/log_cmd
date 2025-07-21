@@ -6,32 +6,55 @@ public Plugin myinfo =
     name = "[Logs] Client Command",
     author = "Nek.'a 2x2 | vk.com/nekromio || t.me/sourcepwn",
     description = "Логирование консольных команд игроков",
-    version = "1.0.0 100",
+    version = "1.0.0 101",
     url = "ggwp.site || vk.com/nekromio || t.me/sourcepwn"
 };
 
-static const char whitelist[][] = {
-    "ak47", "autobuy", "awp", "buy", "buyammo1", "buyammo2",
-    "commandmenu", "deagle", "defuser", "drop", "flashbang",
-    "g3sg1", "gameui_allowescape", "gameui_preventescape",
-    "hegrenade", "joinclass", "joingame", "jointeam",
-    "lastinv", "m4a1", "menuselect", "nightvision", "nvgs",
-    "quit", "rebuy", "say", "say_team", "scout", "sectorclear",
-    "showbriefing", "spec_mode", "spec_next", "spec_prev",
-    "teammenu", "use", "usp", "vban", "vesthelm", "vip", "vips",
-    "voice", "vu", "xm1014", "throw_twice", "-hook", "+hook", "vmodenable",
-    "spec_player",
-
-    // Radio commands (CS:S)
-    "coverme", "takepoint", "holdpos", "regroup", "followme",
-    "go", "fallback", "sticktog", "getinpos", "stormfront",
-    "report", "roger", "enemyspot", "needbackup", "inposition",
-    "reportingin", "getout", "negative", "enemydown"
-};
+ArrayList hWhitelist;
 
 public void OnPluginStart()
 {
+    hWhitelist = new ArrayList(ByteCountToCells(128));
+    LoadWhitelistFromFile();
+
     AddCommandListener(Cmd_Listener);
+}
+
+void LoadWhitelistFromFile()
+{
+    char sDir[PLATFORM_MAX_PATH], path[PLATFORM_MAX_PATH];
+
+    BuildPath(Path_SM, sDir, sizeof(sDir), "data/logs");
+
+    if (!DirExists(sDir))
+        CreateDirectory(sDir, 511);
+
+    BuildPath(Path_SM, path, sizeof(path), "data/logs/cmd_whitelist.ini");
+
+    if (!FileExists(path))
+    {
+        LogError("Файл whitelist не найден: %s", path);
+        return;
+    }
+
+    File file = OpenFile(path, "r");
+    if (file == null)
+    {
+        LogError("Не удалось открыть файл whitelist: %s", path);
+        return;
+    }
+
+    char line[64];
+    while (!IsEndOfFile(file) && ReadFileLine(file, line, sizeof(line)))
+    {
+        TrimString(line);
+        if (line[0] == '\0' || line[0] == '/' || line[0] == '#')
+            continue;
+
+        hWhitelist.PushString(line);
+    }
+
+    delete file;
 }
 
 public Action Cmd_Listener(int client, const char[] command, int argc)
@@ -57,7 +80,7 @@ public Action Cmd_Listener(int client, const char[] command, int argc)
     }
 
     GetLogFilePath(steam, sFile, sizeof(sFile));
-    LogToFileEx(sFile, "[%N] (%s) [%s] -> %s", client, steam, sIP, fullCmd);
+    LogToFileOnly(sFile, "[%N] (%s) [%s] -> %s", client, steam, sIP, fullCmd);
 
     if (!IsWhitelisted(command))
     {
@@ -67,7 +90,7 @@ public Action Cmd_Listener(int client, const char[] command, int argc)
         if (!DirExists(sDir)) CreateDirectory(sDir, 511);
 
         BuildPath(Path_SM, sOddFile, sizeof(sOddFile), "logs/details/cmd/%s/oddly.log", sDate);
-        LogToFileEx(sOddFile, "[%N] (%s) [%s] -> %s", client, steam, sIP, fullCmd);
+        LogToFileOnly(sOddFile, "[%N] (%s) [%s] -> %s", client, steam, sIP, fullCmd);
     }
 
     return Plugin_Continue;
@@ -99,25 +122,48 @@ stock void GetLogFilePath(char[] sSteam, char[] sFile, int maxlen)
 
 stock bool IsValidClient(int client)
 {
-    return (client > 0 && client <= MaxClients && IsClientInGame(client) && !IsFakeClient(client));
+    return 0 < client <= MaxClients && IsClientInGame(client) && !IsFakeClient(client);
 }
 
 bool IsWhitelisted(const char[] cmd)
 {
-    // Проверка на префиксы
     if (cmd[0] == '!' || !StrContains(cmd, "sm_"))
         return true;
 
-    // Выделяем только первую часть команды (до пробела)
     char baseCmd[64];
     BreakString(cmd, baseCmd, sizeof(baseCmd));
 
-    // Проверка по списку
-    for (int i = 0; i < sizeof(whitelist); i++)
+    for (int i = 0; i < hWhitelist.Length; i++)
     {
-        if (StrEqual(baseCmd, whitelist[i], false))
+        char entry[64];
+        hWhitelist.GetString(i, entry, sizeof(entry));
+
+        if (StrEqual(baseCmd, entry, false))
             return true;
     }
 
     return false;
+}
+
+public void LogToFileOnly(const char[] file, const char[] format, any ...)
+{
+    char buffer[512];
+    VFormat(buffer, sizeof(buffer), format, 3);
+
+    char sDate[32];
+    FormatTime(sDate, sizeof(sDate), "%Y:%m:%d %H:%M:%S");
+
+    char final[600];
+    Format(final, sizeof(final), "%s | %s", sDate, buffer);
+
+    File f = OpenFile(file, "a");
+    if (f != null)
+    {
+        WriteFileLine(f, final);
+        delete f;
+    }
+    else
+    {
+        LogError("Failed to open file: %s", file);
+    }
 }
